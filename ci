@@ -1,0 +1,179 @@
+#!/bin/bash
+
+# Deploys a local Concourse CI cluster using Docker Compose.
+#
+# doru@rocketmail.com
+
+# Enforce shell robustness
+set -o errexit
+set -o nounset
+set -o pipefail
+
+# Show line numbers when tracing execution.
+readonly PS4='${LINENO}:+ '
+readonly script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Allow functions that return a string to reach to stdout using FD #3.
+exec 3>&1
+
+# --- F U N C T I O N S --------------------------------------------------------
+
+usage() {
+  cat <<EOF
+$0 - Concourse CI in a box deployment tool
+
+Usage: $0 deploy|destroy|restart|le-cert|ss-cert|add-dr-user
+
+Commands:
+  up
+    Deploys a local docker Concourse environment using Let's Encrypt site certificate.
+  rm
+    Destroys the Concourse environment and removes deployment runtime state.
+  restart
+    Re-deploys the containers. Preserves deployment runtime state.
+  le-cert
+    Creates Let's Encrypt site certificate.
+  ss-cert
+    Create self-signed certificate.
+  add-dr-user <user>
+    Grant docker registry access for <user>. Requires running platform.
+
+EOF
+}
+
+deploy() {
+  util.log "Deploy Concourse CI"
+  concourse.setup
+  # certificates.create_self_signed "${nginx_dir}/secrets" "${host_fqdn}"
+  certificates.setup_letsencrypt "${admin_email}" "${nginx_dir}/secrets" "${sites[@]}"
+  registry.setup
+  ghost.setup
+  nginx.setup
+  docker_compose.setup
+
+  docker-compose up -d
+
+  util.log "Waiting for the Concourse CI cluster to take off"
+  local _version
+  while ! _version=$(util.get_concourse_api_version "${host_url}"); do
+    echo -n '.'; sleep 5
+  done
+  util.log "Concourse CI v${_version//\"/} is running"
+
+  # Create admin account record, if needed.
+  grep -q 'admin' "${registry_dir}/passwd" 2>/dev/null || \
+    registry.add_user 'admin'
+  local _password
+  _password="$(grep '^admin\s' "${registry_dir}/passwd" | cut -f 2)"
+
+  # shellcheck disable=SC2154
+  cat >"${deployments_dir}/docker_login" <<EOF
+#!/bin/bash -euo pipefail
+# Docker registry login script
+docker login "${host_url}" -u "admin" -p "${_password}"
+EOF
+  chmod +x "${deployments_dir}/docker_login"
+  util.run_preview 'Docker registry login:' "${deployments_dir}/docker_login"
+
+  # shellcheck disable=SC2154
+  cat >"${deployments_dir}/ci_login" <<EOF
+#!/bin/bash  -euo pipefail
+# Concourse CI login script
+fly -t "${ci_target}" login -u "${ci_username}" -p "${ci_password}" -c "${host_url}"
+EOF
+  chmod +x "${deployments_dir}/ci_login"
+  util.run_preview 'Concourse login:' "${deployments_dir}/ci_login"
+
+  workers=($(fly -t "${ci_target}" workers | grep stalled | cut -d\  -f1))
+  if [ -n "${workers[*]}" ]; then
+    util.log "Prune stalled Concourse workers"
+    for worker in "${workers[@]}"; do
+      fly -t "${ci_target}" prune-worker -w "${worker}"
+    done
+  fi
+
+  util.log "Concourse CI v${_version//\"/} is up and running at ${host_url}"
+}
+
+destroy() {
+  # Terminates the deployment.
+  # $1  Indicates if service setup data should be deleted too [Default: false].
+  local _delete=${1:-}
+  if [ -s "${script_dir}/docker-compose.yml" ]; then
+    util.log "Destroy Concourse CI deployment"
+    docker-compose -f "${script_dir}/docker-compose.yml" down || false
+  fi
+  if [ "${_delete}" = '--all' ]; then
+    util.log "Removing deployments files"
+    rm -rfv "${deployments_dir}" "${script_dir}/docker-compose.yml" | tail -2
+  fi
+}
+
+# --- M A I N ------------------------------------------------------------------
+
+readonly deployments_dir="${script_dir}/deployments"
+readonly db_dir="${deployments_dir}/db"
+readonly ghost_dir="${deployments_dir}/ghost"
+readonly nginx_dir="${deployments_dir}/nginx"
+readonly registry_dir="${deployments_dir}/registry"
+readonly web_dir="${deployments_dir}/web"
+readonly worker_dir="${deployments_dir}/worker"
+readonly admin_email='doru@rocketmail.com'
+readonly host_fqdn='carastan.com'
+readonly host_url="https://${host_fqdn}"
+readonly sites=("${host_fqdn}" "ci.${host_fqdn}" "git.${host_fqdn}")
+readonly ci_target='.'
+
+# Load library modules.
+# shellcheck disable=SC1090
+source "${script_dir}/lib/certificates.sh"
+# shellcheck disable=SC1090
+source "${script_dir}/lib/concourse.sh"
+# shellcheck disable=SC1090
+source "${script_dir}/lib/docker-compose.sh"
+# shellcheck disable=SC1090
+source "${script_dir}/lib/nginx.sh"
+# shellcheck disable=SC1090
+source "${script_dir}/lib/registry.sh"
+# shellcheck disable=SC1090
+source "${script_dir}/lib/util.sh"
+
+case "${1:-}" in
+  destroy|rm)
+    destroy --all
+    ;;
+  deploy|up)
+    # TODO: Add command line options for admin_email and host_fqdn.
+    deploy
+    ;;
+  restart)
+    destroy
+    deploy
+    ;;
+  le-cert)
+    util.log "Let's Encrypt certificate generation and renewal requires the" \
+      "HTTPS port be available. A sudo prompt will be presented to allow the" \
+      "lego tool bind to port 443."
+    # Free up the HTTPS port.
+    destroy
+    # Specify subject alternative names for each service running on this host.
+    certificates.create_letsencrypt "${admin_email}" "${sites[@]}"
+    ;;
+  ss-cert)
+    certificates.create_self_signed "${HOME}/.certs" "${host_fqdn}"
+    ;;
+  add-dr-user)
+    shift
+    registry.add_user "${1:?Missing value for --add-dr-user}"
+    ;;
+  help|--help|-h)
+    usage
+    ;;
+  *)
+    if [ -z "${1:-}" ]; then
+      usage
+    else
+      log_error "Unsuported command: '${1:-}'. See '$0 --help'."
+    fi
+    exit 1
+esac
