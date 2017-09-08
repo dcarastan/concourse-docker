@@ -26,9 +26,11 @@ Usage: $0 deploy|destroy|restart|le-cert|ss-cert|add-dr-user
 
 Commands:
   up
-    Deploys a local docker Concourse environment using Let's Encrypt site certificate.
+    Deploys a local docker Concourse cluster featuring Let's Encrypt site certificate.
+  down
+    Destroys the Concourse cluster and preserves runtime configuration and state.
   rm
-    Destroys the Concourse environment and removes deployment runtime state.
+    Destroys the Concourse cluster and removes configuration and state.
   restart
     Re-deploys the containers. Preserves deployment runtime state.
   le-cert
@@ -47,7 +49,6 @@ deploy() {
   # certificates.create_self_signed "${nginx_dir}/secrets" "${host_fqdn}"
   certificates.setup_letsencrypt "${admin_email}" "${nginx_dir}/secrets" "${sites[@]}"
   registry.setup
-  ghost.setup
   nginx.setup
   docker_compose.setup
 
@@ -142,6 +143,9 @@ case "${1:-}" in
   destroy|rm)
     destroy --all
     ;;
+  down)
+    destroy
+    ;;
   deploy|up)
     # TODO: Add command line options for admin_email and host_fqdn.
     deploy
@@ -173,7 +177,7 @@ case "${1:-}" in
     if [ -z "${1:-}" ]; then
       usage
     else
-      log_error "Unsuported command: '${1:-}'. See '$0 --help'."
+      util.log_error "Unsuported command: '${1:-}'. See '$0 --help'."
     fi
     exit 1
 esac
