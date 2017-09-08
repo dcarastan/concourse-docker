@@ -108,7 +108,7 @@ services:
     environment:
       CONCOURSE_TSA_HOST: web
     command: worker
-    
+
   db:
     # 9.5-alpine
     image: postgres:9.5
@@ -133,7 +133,7 @@ services:
     - 2368:2368
     environment:
       GHOST_CONTENT: /var/lib/ghost/content
-      url: https://ci.carastan.com/blog/
+      url: "${host_url}/blog/"
       NODE_ENV: production
 
 EOF
