@@ -85,13 +85,19 @@ EOF
   chmod +x "${deployments_dir}/ci_login"
   util.run_preview 'Concourse login:' "${deployments_dir}/ci_login"
 
-  workers=($(fly -t "${ci_target}" workers | grep stalled | cut -d\  -f1))
-  if [ -n "${workers[*]}" ]; then
-    util.log "Prune stalled Concourse workers"
-    for worker in "${workers[@]}"; do
-      fly -t "${ci_target}" prune-worker -w "${worker}"
-    done
-  fi
+  # Wait a bit so that Concourse can figure out if the workers it knows of
+  # are still around. Favor execution speed vs. accuracy.
+  for i in $(seq 1 3); do
+    workers=($(fly -t "${ci_target}" workers | grep stalled | cut -d\  -f1))
+    if [ -n "${workers[*]}" ]; then
+      util.log "Prune stalled Concourse workers"
+      for worker in "${workers[@]}"; do
+        fly -t "${ci_target}" prune-worker -w "${worker}"
+      done
+      break
+    fi
+    sleep 3
+  done
 
   util.log "Concourse CI v${_version//\"/} is up and running at ${host_url}"
 }
