@@ -1,3 +1,5 @@
+# Concourse in a box
+
 Table of content
 ----------------
 - **[Introduction](#introduction)**
@@ -11,7 +13,7 @@ Table of content
 
 Introduction
 ------------
-The project goal is to instantiate a local Concourse CI cluster and blog site for personal needs. I run it on Mac OS 10.12.6 but code can be easily tweaked to run on Linux. YMMV. Feel free to fork and modify to fit your needs.
+The `Concourse in a box` project goal is to instantiate a local Concourse CI cluster and blog site for personal needs. I run it on Mac OS 10.12.6, but code can be easily tweaked to run on Linux. YMMV. Feel free to fork and modify to fit your needs.
 
 Requirements
 ------------
