@@ -78,8 +78,6 @@ services:
     links:
     - db
     command: web
-    ports:
-    - 8080:8080
     volumes:
     - ./deployments/web:/concourse-keys
     # Service will retry until conocurse-db comes up.
